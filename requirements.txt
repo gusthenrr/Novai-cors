@@ -1,0 +1,6 @@
+Flask>=3.0,<4
+flask-cors>=4.0,<5
+requests>=2.31,<3
+urllib3>=2.0,<3
+brotlicffi>=1.0.9
+gunicorn>=21,<23
