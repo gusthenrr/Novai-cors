@@ -1,11 +1,12 @@
 # server_light.py
 from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
-import os, re
+import os
 import requests
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, urlunparse, parse_qsl, urlencode
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
+import http.cookiejar as cookielib
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -25,6 +26,9 @@ USE_PROXY = os.getenv("LR_USE_PROXY", "0").strip().lower() in ("1","true","on","
 PROXY_URL = os.getenv("LR_PROXY_URL", "").strip()  # ex: http://user:pass@host:port
 PROXIES   = {"http": PROXY_URL, "https": PROXY_URL} if (USE_PROXY and PROXY_URL) else None
 
+# ===== Flags de segurança =====
+FORWARD_AUTH = os.getenv("LR_FORWARD_AUTH", "0").strip().lower() in ("1","true","on","yes")  # OFF por padrão
+
 # ===== Headers básicos =====
 DEFAULT_OUT_HEADERS = {
     "User-Agent": os.getenv("LR_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -34,8 +38,9 @@ DEFAULT_OUT_HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
     "Connection": "keep-alive",
 }
+# NÃO inclui Authorization por padrão (pode ligar via LR_FORWARD_AUTH)
 FORWARD_INBOUND = (
-    "Authorization","Accept","Accept-Language","User-Agent",
+    "Accept","Accept-Language","User-Agent",
     "Range","If-None-Match","If-Modified-Since","Cache-Control","Pragma",
     "Content-Type"  # (relevante se você habilitar POST depois)
 )
@@ -45,15 +50,23 @@ HOP_BY_HOP = {
     "te","trailers","transfer-encoding","upgrade"
 }
 
+# ===== Session sem cookies, sem retries =====
 session = requests.Session()
-adapter = HTTPAdapter(
-    pool_connections=POOL_CONN,
-    pool_maxsize=POOL_MAX,
-    max_retries=Retry(total=0)  # sem retries no light
-)
+adapter = HTTPAdapter(pool_connections=POOL_CONN,
+                      pool_maxsize=POOL_MAX,
+                      max_retries=Retry(total=0))  # sem retries no light
 session.mount("https://", adapter)
 session.mount("http://", adapter)
 session.trust_env = False  # ignora proxies do sistema
+
+class _NoCookiesPolicy(cookielib.CookiePolicy):
+    rfc2965 = False; netscape = False; hide_cookie2 = True
+    def set_ok(self, cookie, request): return False
+    def return_ok(self, cookie, request): return False
+    def domain_return_ok(self, domain, request): return False
+    def path_return_ok(self, path, request): return False
+session.cookies = cookielib.CookieJar()
+session.cookies.set_policy(_NoCookiesPolicy())
 
 def is_allowed(target: str) -> bool:
     try:
@@ -78,7 +91,7 @@ def add_cors(resp: Response):
     )
     resp.headers["Access-Control-Expose-Headers"] = (
         "Content-Type, ETag, Cache-Control, Last-Modified, Location, Content-Range, "
-        "Content-Length, X-Proxy-Final-Url, X-Proxy-Static"
+        "Content-Length, X-Proxy-Final-Url, X-Proxy-Fwd-Query, X-Proxy-Static"
     )
     resp.headers["Access-Control-Max-Age"] = "86400"
     resp.headers["Vary"] = "Origin, Access-Control-Request-Headers, Access-Control-Request-Method"
@@ -112,8 +125,13 @@ def light_proxy(raw: str):
       /?u=https://api.mercadolibre.com/sites/MLB/search?q=...
     """
     # 1) Resolve target a partir de path ou ?u=
+    qs = ""
     if raw:
         target = unquote(raw)
+        # (FIX) anexa a query que veio para o proxy quando usar path-style
+        qs = request.query_string.decode("utf-8")
+        if qs:
+            target = f"{target}{'&' if '?' in target else '?'}{qs}"
     else:
         target = request.args.get("u","").strip()
 
@@ -129,6 +147,9 @@ def light_proxy(raw: str):
     for k in FORWARD_INBOUND:
         v = request.headers.get(k)
         if v: out_headers[k] = v
+    if FORWARD_AUTH:
+        v = request.headers.get("Authorization")
+        if v: out_headers["Authorization"] = v
 
     # 4) Dispara upstream (sem cookies, sem rotação, sem retries)
     try:
@@ -155,7 +176,7 @@ def light_proxy(raw: str):
     )
     for k, v in r.headers.items():
         lk = k.lower()
-        if lk in HOP_BY_HOP: 
+        if lk in HOP_BY_HOP:
             continue
         # passe apenas os cabeçalhos úteis/seguros
         if lk in ("content-type","cache-control","etag","last-modified",
@@ -164,6 +185,8 @@ def light_proxy(raw: str):
 
     # Info de debug
     resp.headers["X-Proxy-Final-Url"] = getattr(r, "url", target)
+    if raw:
+        resp.headers["X-Proxy-Fwd-Query"] = qs
     if PROXIES:
         resp.headers["X-Proxy-Static"] = _mask_proxy(PROXY_URL)
 
