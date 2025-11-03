@@ -178,7 +178,9 @@ def light_proxy(raw: str):
         if v: out_headers[k] = v
     if FORWARD_AUTH:
         v = request.headers.get("Authorization")
-        if v: out_headers["Authorization"] = v
+        if v: 
+            out_headers["Authorization"] = v
+            auth_fwd = True
 
     # 4) Upstream
     try:
@@ -196,6 +198,7 @@ def light_proxy(raw: str):
         resp = Response(body.get_data(as_text=True), status=502, mimetype="application/json")
         if PROXIES:
             resp.headers["X-Proxy-Static"] = _mask_proxy(PROXY_URL)
+        resp.headers["X-Proxy-Auth"] = "1" if auth_fwd else "0"
         return add_cors(resp)
 
     # 5) Resposta
@@ -223,4 +226,5 @@ def light_proxy(raw: str):
 # ===================== Main =====================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT","8081")))
+
 
