@@ -3,7 +3,7 @@ from flask import Flask, request, Response, jsonify
 from flask_cors import CORS
 import os
 import requests
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, parse_qs
 from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 import http.cookiejar as cookielib
@@ -101,7 +101,7 @@ def add_cors(resp: Response):
         "x-api-server-segment,x-content-type-options,x-request-id,strict-transport-security,"
         "x-frame-options,x-xss-protection,access-control-allow-origin,access-control-allow-headers,"
         "access-control-allow-methods,x-cache,via,x-amz-cf-pop,x-amz-cf-id,"
-        "X-Proxy-Final-Url,X-Proxy-Fwd-Query,X-Proxy-Static"
+        "X-Proxy-Final-Url,X-Proxy-Fwd-Query,X-Proxy-Static,X-Proxy-Auth"
     )
     resp.headers["Access-Control-Max-Age"] = "86400"
     resp.headers["Vary"] = "Origin, Access-Control-Request-Headers, Access-Control-Request-Method"
@@ -223,3 +223,4 @@ def light_proxy(raw: str):
 # ===================== Main =====================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT","8081")))
+
