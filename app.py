@@ -119,7 +119,12 @@ def _mask_proxy(url: str) -> str:
 # ===================== Health & Ping =====================
 @app.get("/_health")
 def _health():
-    return "ok", 200
+    return jsonify({
+        "ok": True,
+        "service": "novai-cors",
+        "static_proxy_enabled": bool(PROXIES),
+        "authorization_forwarding": FORWARD_AUTH,
+    }), 200
 
 @app.get("/ping")
 def _ping():
@@ -173,6 +178,7 @@ def light_proxy(raw: str):
 
     # 3) Headers de saída
     out_headers = dict(DEFAULT_OUT_HEADERS)
+    auth_fwd = False
     for k in FORWARD_INBOUND:
         v = request.headers.get(k)
         if v: out_headers[k] = v
